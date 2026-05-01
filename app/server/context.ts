@@ -83,6 +83,19 @@ export async function createAppContext(config: HeadplaneConfig) {
         }
       : undefined;
 
+  if (config.proxy && config.proxy.enabled !== false) {
+    if (!headscaleApiKey) {
+      log.error("auth", "proxy auth enabled but headscale.api_key is not configured");
+    }
+    if (!config.proxy?.allowed_ips?.length) {
+      log.warn(
+        "auth",
+        "proxy auth enabled without allowed_ips: any request can forge proxy headers",
+      );
+    }
+
+  }
+
   return {
     config,
     db,
@@ -91,6 +104,7 @@ export async function createAppContext(config: HeadplaneConfig) {
     agents,
     auth,
     oidc,
+    proxy: config.proxy?.enabled !== false ? config.proxy : undefined,
     hsLive: createLiveStore([nodesResource, usersResource]),
     hs: await loadHeadscaleConfig(
       config.headscale.config_path,
