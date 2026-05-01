@@ -193,11 +193,54 @@ export const partialIntegrationConfig = type({
   agent: partialAgentConfig.optional(),
 }).partial();
 
+const proxyConfig = type({
+  enabled: "boolean = true",
+  preset: '"authelia" | "authentik" | "oauth2-proxy" | "alb" | "cloudflare-access" | "gcp-iap"?',
+  issuer: "string.url?",
+  region: "string?",
+  team: "string?",
+  audience: "string?",
+  headers: type({
+    subject: "string",
+    email: "string?",
+    name: "string?",
+  }).optional(),
+  jwt: type({
+    header: "string",
+    jwks_url: "string.url?",
+    issuer: "string.url?",
+  }).optional(),
+  allowed_ips: type("string[]").optional(),
+  logout_url: "string.url?",
+});
+
+const partialProxyConfig = type({
+  enabled: "boolean?",
+  preset: '"authelia" | "authentik" | "oauth2-proxy" | "alb" | "cloudflare-access" | "gcp-iap"?',
+  issuer: "string.url?",
+  region: "string?",
+  team: "string?",
+  audience: "string?",
+  headers: type({
+    subject: "string?",
+    email: "string?",
+    name: "string?",
+  }).optional(),
+  jwt: type({
+    header: "string?",
+    jwks_url: "string.url?",
+    issuer: "string.url?",
+  }).optional(),
+  allowed_ips: type("string[]").optional(),
+  logout_url: "string.url?",
+});
+
 export const headplaneConfig = type({
   debug: "boolean = false",
   server: serverConfig,
   headscale: headscaleConfig,
   oidc: oidcConfig.optional(),
+  proxy: proxyConfig.optional(),
   integration: integrationConfig.optional(),
 }).onDeepUndeclaredKey("delete");
 
@@ -206,11 +249,13 @@ export const partialHeadplaneConfig = type({
   server: partialServerConfig.optional(),
   headscale: partialHeadscaleConfig.optional(),
   oidc: partialOidcConfig.optional(),
+  proxy: partialProxyConfig.optional(),
   integration: partialIntegrationConfig.optional(),
 });
 
 export type HeadplaneConfig = typeof headplaneConfig.infer;
 export type PartialHeadplaneConfig = typeof partialHeadplaneConfig.infer;
+export type ProxyConfig = typeof proxyConfig.infer;
 
 type DotNotationToObjects<T extends string, V> = T extends `${infer K}.${infer Rest}`
   ? { [P in K]?: DotNotationToObjects<Rest, V> }

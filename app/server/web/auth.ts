@@ -33,6 +33,20 @@ export type Principal =
         username?: string;
         picture?: string;
       };
+    }
+  | {
+      kind: "proxy";
+      sessionId: string;
+      user: {
+        id: string;
+        subject: string;
+        role: Role;
+        headscaleUserId: string | undefined;
+      };
+      profile: {
+        name: string;
+        email?: string;
+      };
     };
 
 interface CookiePayload {
@@ -66,6 +80,11 @@ export interface AuthService {
     userId: string,
     profile: NonNullable<CookiePayload["profile"]>,
     options?: { idToken?: string; maxAge?: number },
+  ): Promise<string>;
+  createProxySession(
+    userId: string,
+    profile: { name: string; email?: string },
+    options?: { maxAge?: number },
   ): Promise<string>;
 
   createApiKeySession(apiKey: string, displayName: string, maxAge: number): Promise<string>;
@@ -172,6 +191,38 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
       };
     }
 
+    if (session.kind === "proxy") {
+      if (!session.user_id) {
+        throw new Error("Proxy session missing user_id");
+      }
+
+      const [user] = await opts.db
+        .select()
+        .from(users)
+        .where(eq(users.id, session.user_id))
+        .limit(1);
+
+      if (!user) {
+        throw new Error("User record not found");
+      }
+
+      const role = (user.role in Roles ? user.role : "member") as Role;
+      return {
+        kind: "proxy",
+        sessionId: session.id,
+        user: {
+          id: user.id,
+          subject: user.sub,
+          role,
+          headscaleUserId: user.headscale_user_id ?? undefined,
+        },
+        profile: {
+          name: user.name ?? user.sub,
+          email: user.email ?? undefined,
+        },
+      };
+    }
+
     if (!session.user_id) {
       throw new Error("OIDC session missing user_id");
     }
@@ -260,6 +311,23 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
       kind: "oidc",
       user_id: userId,
       oidc_id_token: options?.idToken,
+      expires_at: new Date(Date.now() + maxAge * 1000),
+    });
+
+    return encodeCookie({ sid, profile }, maxAge);
+  }
+
+  async function createProxySession(
+    userId: string,
+    profile: { name: string; email?: string },
+    options?: { maxAge?: number },
+  ): Promise<string> {
+    const maxAge = options?.maxAge ?? opts.cookie.maxAge;
+    const sid = ulid();
+    await opts.db.insert(authSessions).values({
+      id: sid,
+      kind: "proxy",
+      user_id: userId,
       expires_at: new Date(Date.now() + maxAge * 1000),
     });
 
@@ -507,6 +575,7 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
     canManageNode,
     getHeadscaleApiKey,
     createOidcSession,
+    createProxySession,
     createApiKeySession,
     destroySession,
     findOrCreateUser,
