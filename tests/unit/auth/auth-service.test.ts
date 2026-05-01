@@ -203,6 +203,32 @@ describe("session round-trip", () => {
 
     await expect(auth.require(request)).rejects.toThrow();
   });
+
+  test("createProxySession + require resolves back to proxy principal with correct user data", async () => {
+    const userId = await auth.findOrCreateUser("proxy:test:user1", {
+      name: "Proxy User",
+      email: "proxy@test.com",
+    });
+
+    const cookieHeader = await auth.createProxySession(userId, {
+      name: "Proxy User",
+      email: "proxy@test.com",
+    });
+
+    const cookieValue = cookieHeader.split(";")[0];
+    const request = new Request("http://localhost/test", {
+      headers: { cookie: cookieValue },
+    });
+
+    const principal = await auth.require(request);
+    expect(principal.kind).toBe("proxy");
+    if (principal.kind === "proxy") {
+      expect(principal.user.id).toBe(userId);
+      expect(principal.user.subject).toBe("proxy:test:user1");
+      expect(principal.profile.name).toBe("Proxy User");
+      expect(principal.profile.email).toBe("proxy@test.com");
+    }
+  });
 });
 
 describe("authorization", () => {
@@ -224,6 +250,13 @@ describe("authorization", () => {
     sessionId: "test",
     user: { id: "u1", subject: "sub1", role: "viewer", headscaleUserId: "hs-1" },
     profile: { name: "Test" },
+  };
+
+  const proxyPrincipal: Principal = {
+    kind: "proxy",
+    sessionId: "test",
+    user: { id: "u2", subject: "proxy:test:user1", role: "viewer", headscaleUserId: "hs-1" },
+    profile: { name: "Proxy User" },
   };
 
   const machine: Machine = {
@@ -261,5 +294,34 @@ describe("authorization", () => {
       user: { id: "hs-other", name: "other", createdAt: "" },
     };
     expect(auth.canManageNode(oidcPrincipal, otherMachine)).toBe(false);
+  });
+
+  test("can() with proxy principal checks role bitmask correctly", () => {
+    expect(auth.can(proxyPrincipal, Capabilities.write_machines)).toBe(false);
+    expect(auth.can(proxyPrincipal, Capabilities.owner)).toBe(false);
+
+    const proxyAdmin: Principal = {
+      ...proxyPrincipal,
+      user: { ...proxyPrincipal.user, role: "admin" },
+    };
+    expect(auth.can(proxyAdmin, Capabilities.write_machines)).toBe(true);
+  });
+
+  test("canManageNode() with proxy principal returns true when user owns the node", () => {
+    expect(auth.canManageNode(proxyPrincipal, machine)).toBe(true);
+  });
+
+  test("canManageNode() with proxy principal returns false when user doesn't own the node and lacks write_machines", () => {
+    const otherMachine: Machine = {
+      ...machine,
+      user: { id: "hs-other", name: "other", createdAt: "" },
+    };
+    expect(auth.canManageNode(proxyPrincipal, otherMachine)).toBe(false);
+  });
+
+  test("getHeadscaleApiKey() with proxy principal throws when key not configured", () => {
+    expect(() => auth.getHeadscaleApiKey(proxyPrincipal)).toThrow(
+      "Headscale API key not configured",
+    );
   });
 });

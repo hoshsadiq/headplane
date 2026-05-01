@@ -293,7 +293,7 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
     }
 
     if (!opts.headscaleApiKey) {
-      throw new Error("OIDC sessions require headscale.api_key to be configured");
+      throw new Error("Headscale API key not configured");
     }
 
     return opts.headscaleApiKey;
