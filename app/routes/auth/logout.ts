@@ -37,6 +37,10 @@ export async function action({ request, context }: ActionFunctionArgs<AppContext
     }
   }
 
+  if (principal?.kind === "proxy") {
+    url = context.config.proxy?.logout_url ?? "/login";
+  }
+
   return redirect(url, {
     headers: {
       "Set-Cookie": await context.auth.destroySession(request),

@@ -7,6 +7,7 @@ import Card from "~/components/card";
 import Code from "~/components/code";
 import Input from "~/components/input";
 import Link from "~/components/link";
+import { AUTH_SPECIFIC_PROXY_HEADERS } from "~/server/proxy/types";
 import { useLiveData } from "~/utils/live-data";
 
 import type { Route } from "./+types/page";
@@ -20,6 +21,13 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     await context.auth.require(request);
     return redirect("/machines");
   } catch {}
+
+  if (context.proxy && context.proxy.enabled !== false) {
+    const hasProxyHeaders = [...AUTH_SPECIFIC_PROXY_HEADERS].some((h) => request.headers.has(h));
+    if (hasProxyHeaders) {
+      return redirect("/machines");
+    }
+  }
 
   const qp = new URL(request.url).searchParams;
   const urlState = qp.get("s") ?? undefined;
