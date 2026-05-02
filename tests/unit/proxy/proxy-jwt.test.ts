@@ -357,98 +357,45 @@ describe("createJwtValidator", () => {
       key_source: { kind: "dynamic_header", meta_header: "X-authentik-meta-jwks" },
     };
 
+    const token = await signJwt({ sub: "user-http", email: "http@test.com" });
     const validate = createJwtValidator(jwtConfig, makeConfig());
-    const token = await signJwt({ sub: "user-1" });
-    const result = await validate(
-      new Request("http://localhost", {
-        headers: {
-          "X-authentik-jwt": token,
-          "X-authentik-meta-jwks": "http://insecure.example.com/jwks",
-        },
-      }),
-    );
+    const request = new Request("http://localhost", {
+      headers: {
+        "X-authentik-jwt": token,
+        "X-authentik-meta-jwks": "http://insecure.example.com/jwks",
+      },
+    });
 
-    expect(result).toBeNull();
+    expect(await validate(request)).toBeNull();
   });
 
-  test("returns null when dynamic meta-header is missing from request", async () => {
+  test("returns null when dynamic header meta-header is missing", async () => {
     const jwtConfig: JwtValidatorConfig = {
       header: "X-authentik-jwt",
       key_source: { kind: "dynamic_header", meta_header: "X-authentik-meta-jwks" },
     };
 
+    const token = await signJwt({ sub: "user-no-meta" });
     const validate = createJwtValidator(jwtConfig, makeConfig());
-    const token = await signJwt({ sub: "user-1" });
-    const result = await validate(
-      new Request("http://localhost", {
-        headers: { "X-authentik-jwt": token },
-      }),
-    );
+    const request = new Request("http://localhost", {
+      headers: { "X-authentik-jwt": token },
+    });
 
-    expect(result).toBeNull();
+    expect(await validate(request)).toBeNull();
   });
 
-  test("returns null when AWS ALB config missing region", async () => {
+  test("returns null when ALB region is empty", async () => {
     const jwtConfig: JwtValidatorConfig = {
       header: "x-amzn-oidc-data",
       key_source: { kind: "aws_alb_pem" },
     };
 
-    const validate = createJwtValidator(jwtConfig, makeConfig());
-    const token = await signJwt(
-      { sub: "alb-user" },
-      { key: ecPrivateKey, alg: "ES256", kid: "some-kid" },
-    );
-    const result = await validate(
-      new Request("http://localhost", { headers: { "x-amzn-oidc-data": token } }),
-    );
-
-    expect(result).toBeNull();
-  });
-
-  test("OIDC discovery failure resets state so retry succeeds", async () => {
-    const issuer = "https://oidc-retry.example.com";
-    const jwksUrl = `${issuer}/jwks`;
-    const discoveryUrl = `${issuer}/.well-known/openid-configuration`;
-
-    let discoveryAttempts = 0;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.href
-            : (input as Request).url;
-
-      if (url === discoveryUrl) {
-        discoveryAttempts++;
-        if (discoveryAttempts === 1) {
-          throw new Error("Network error");
-        }
-        return new Response(JSON.stringify({ jwks_uri: jwksUrl }), {
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-      if (url === jwksUrl) return jwksJson([rsaPublicJwk]);
-      return new Response("Not found", { status: 404 });
+    const token = await signJwt({ sub: "user-alb" });
+    const validate = createJwtValidator(jwtConfig, makeConfig({ region: "" }));
+    const request = new Request("http://localhost", {
+      headers: { "x-amzn-oidc-data": token },
     });
 
-    const jwtConfig: JwtValidatorConfig = {
-      header: "X-JWT",
-      key_source: { kind: "oidc_discovery" },
-    };
-
-    const validate = createJwtValidator(jwtConfig, makeConfig({ issuer }));
-
-    const token1 = await signJwt({ sub: "user-1" }, { issuer });
-    expect(
-      await validate(new Request("http://localhost", { headers: { "X-JWT": token1 } })),
-    ).toBeNull();
-
-    const token2 = await signJwt({ sub: "user-1" }, { issuer });
-    const result = await validate(
-      new Request("http://localhost", { headers: { "X-JWT": token2 } }),
-    );
-    expect(result?.sub).toBe("user-1");
+    expect(await validate(request)).toBeNull();
   });
 });

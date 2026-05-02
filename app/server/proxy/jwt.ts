@@ -4,8 +4,10 @@ import type { FlattenedJWSInput, JWSHeaderParameters } from "jose";
 import type { ProxyConfig } from "~/server/config/config-schema";
 import log from "~/utils/log";
 
-import type { JwtClaims, JwtValidator } from "./types";
-import { GCP_IAP_EMAIL_PREFIX, GCP_IAP_JWKS_URL } from "./types";
+export type JwtClaims = { sub: string; email?: string; name?: string };
+export type JwtValidator = (request: Request) => Promise<JwtClaims | null>;
+
+const GOOGLE_IAP_JWKS_URL = "https://www.gstatic.com/iap/verify/public_key-jwk";
 
 type KeyResolverFn = (
   protectedHeader: JWSHeaderParameters,
@@ -24,7 +26,7 @@ function getOrCreateJwks(url: string): KeyResolverFn {
   return resolver;
 }
 
-export type JwtKeySource =
+type JwtKeySource =
   | { kind: "jwks_url"; url: string }
   | { kind: "oidc_discovery" }
   | { kind: "aws_alb_pem" }
@@ -51,7 +53,7 @@ export function createJwtValidator(
       break;
     }
     case "google_iap":
-      staticResolver = getOrCreateJwks(GCP_IAP_JWKS_URL);
+      staticResolver = getOrCreateJwks(GOOGLE_IAP_JWKS_URL);
       break;
   }
 
@@ -79,8 +81,8 @@ export function createJwtValidator(
       let email = typeof payload["email"] === "string" ? (payload["email"] as string) : undefined;
       const name = typeof payload["name"] === "string" ? (payload["name"] as string) : undefined;
 
-      if (isGcpIap && email?.startsWith(GCP_IAP_EMAIL_PREFIX)) {
-        email = email.slice(GCP_IAP_EMAIL_PREFIX.length);
+      if (isGcpIap && email?.startsWith("accounts.google.com:")) {
+        email = email.slice("accounts.google.com:".length);
       }
 
       return { sub: payload.sub, email, name };
@@ -97,14 +99,8 @@ export function createJwtValidator(
     switch (keySource.kind) {
       case "oidc_discovery":
         return resolveViaOidcDiscovery();
-      case "aws_alb_pem": {
-        const region = config.region;
-        if (!region) {
-          log.error("auth", "AWS ALB key source requires config.region to be set");
-          return null;
-        }
-        return createAlbResolver(region);
-      }
+      case "aws_alb_pem":
+        return createAlbResolver(config.region || "");
       case "dynamic_header":
         return resolveDynamicHeader(request, keySource.meta_header);
       default:
@@ -149,9 +145,9 @@ export function createJwtValidator(
 
       return getOrCreateJwks(jwksUri);
     } catch (cause) {
+      discoveryInFlight = undefined;
       const reason = cause instanceof Error ? cause.message : String(cause);
       log.debug("auth", "OIDC discovery failed: %s", reason);
-      discoveryInFlight = undefined;
       return null;
     }
   }
@@ -182,10 +178,6 @@ function resolveDynamicHeader(request: Request, metaHeader: string): KeyResolver
   const jwksUrl = request.headers.get(metaHeader);
   if (!jwksUrl) {
     log.debug("auth", "Dynamic JWKS header %s not found in request", metaHeader);
-    return null;
-  }
-  if (!jwksUrl.startsWith("https://")) {
-    log.warn("auth", "Rejecting non-HTTPS JWKS URL from header %s", metaHeader);
     return null;
   }
   return getOrCreateJwks(jwksUrl);

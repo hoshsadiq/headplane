@@ -53,7 +53,7 @@ describe("proxy startup validation", () => {
       },
       proxy: {
         enabled: true,
-        preset: "authelia",
+        headers: { subject: "Remote-User" },
       },
     };
 
@@ -70,7 +70,7 @@ describe("proxy startup validation", () => {
       ...baseConfig,
       proxy: {
         enabled: true,
-        preset: "authelia",
+        headers: { subject: "Remote-User" },
         allowed_ips: ["10.0.0.0/8"],
       },
     };
@@ -88,7 +88,7 @@ describe("proxy startup validation", () => {
       ...baseConfig,
       proxy: {
         enabled: false,
-        preset: "authelia",
+        headers: { subject: "Remote-User" },
       },
     };
 
@@ -107,7 +107,7 @@ describe("proxy startup validation", () => {
       },
       proxy: {
         enabled: true,
-        preset: "authelia",
+        headers: { subject: "Remote-User" },
         allowed_ips: ["10.0.0.0/8"],
       },
     };

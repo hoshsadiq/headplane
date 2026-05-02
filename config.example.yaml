@@ -253,3 +253,60 @@ integration:
 #   # of custom hinting.
 #   extra_params:
 #     prompt: "select_account" # Example: force account selection on Google
+
+# Proxy Authentication — for setups where an upstream auth proxy (Authelia, Authentik,
+# Cloudflare Access, etc.) handles OIDC and forwards the authenticated user's identity
+# to Headplane via HTTP headers or a signed JWT.
+#
+# See https://headplane.net/features/proxy-auth for full documentation and
+# per-provider configuration examples.
+# proxy:
+#   # Set to false to define the proxy section without activating it.
+#   # Useful for Helm charts or generating docs from config files.
+#   enabled: true
+#
+#   # Which HTTP headers carry the user's identity. At minimum, `subject` is required.
+#   headers:
+#     subject: "Remote-User"      # Required. Stable unique identifier for the user.
+#     # email: "Remote-Email"     # Optional.
+#     # name: "Remote-Name"       # Optional.
+#
+#   # JWT validation (optional). When configured, Headplane validates the JWT signature
+#   # before trusting any claims. Validated claims take priority over plain headers.
+#   # jwt:
+#   #   header: "X-authentik-jwt"
+#   #   key_source:
+#   #     kind: "dynamic_header"
+#   #     meta_header: "X-authentik-meta-jwks"
+#   #
+#   # Supported key_source kinds:
+#   #   jwks_url          — fetch keys from a static JWKS endpoint (requires `url`)
+#   #   oidc_discovery    — discover JWKS from the issuer's .well-known endpoint
+#   #   aws_alb_pem       — fetch per-kid PEM from AWS (uses `region`)
+#   #   google_iap        — fetch from Google's IAP public key endpoint
+#   #   dynamic_header    — read the JWKS URL from a request header (requires `meta_header`)
+#
+#   # OIDC issuer URL — used for oidc_discovery key source and JWT issuer claim validation.
+#   # issuer: "https://your-idp.example.com"
+#
+#   # AWS region — used by the aws_alb_pem key source.
+#   # region: "us-east-1"
+#
+#   # Cloudflare team name — the subdomain of cloudflareaccess.com for your org.
+#   # team: "your-team"
+#
+#   # GCP IAP audience — checked against the JWT aud claim.
+#   # audience: "/projects/123456789/apps/my-app"
+#
+#   # Restrict which source IPs are allowed to forward proxy headers. Accepts
+#   # individual IPs or CIDR ranges. Without this, any IP that can reach Headplane
+#   # directly could forge identity headers. Headplane logs a warning at startup
+#   # if this is not set.
+#   # allowed_ips:
+#   #   - "10.0.0.0/8"
+#   #   - "172.16.0.0/12"
+#
+#   # Where to redirect the user after they log out of Headplane. Without this,
+#   # Headplane destroys the session and returns to the login page, but the proxy
+#   # may immediately re-authenticate the user.
+#   # logout_url: "https://auth.example.com/logout"

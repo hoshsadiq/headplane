@@ -193,9 +193,21 @@ export const partialIntegrationConfig = type({
   agent: partialAgentConfig.optional(),
 }).partial();
 
+const jwtKeySource = type({ kind: '"jwks_url"', url: "string.url" })
+  .or({ kind: '"oidc_discovery"' })
+  .or({ kind: '"aws_alb_pem"' })
+  .or({ kind: '"google_iap"' })
+  .or({ kind: '"dynamic_header"', meta_header: "string" });
+
+export type JwtKeySource = typeof jwtKeySource.infer;
+
+const proxyJwtConfig = type({
+  header: "string",
+  key_source: jwtKeySource,
+});
+
 const proxyConfig = type({
   enabled: "boolean = true",
-  preset: '"authelia" | "authentik" | "oauth2-proxy" | "alb" | "cloudflare-access" | "gcp-iap"?',
   issuer: "string.url?",
   region: "string?",
   team: "string?",
@@ -205,18 +217,13 @@ const proxyConfig = type({
     email: "string?",
     name: "string?",
   }).optional(),
-  jwt: type({
-    header: "string",
-    jwks_url: "string.url?",
-    issuer: "string.url?",
-  }).optional(),
+  jwt: proxyJwtConfig.optional(),
   allowed_ips: type("string[]").optional(),
   logout_url: "string.url?",
 });
 
 const partialProxyConfig = type({
   enabled: "boolean?",
-  preset: '"authelia" | "authentik" | "oauth2-proxy" | "alb" | "cloudflare-access" | "gcp-iap"?',
   issuer: "string.url?",
   region: "string?",
   team: "string?",
@@ -226,11 +233,7 @@ const partialProxyConfig = type({
     email: "string?",
     name: "string?",
   }).optional(),
-  jwt: type({
-    header: "string?",
-    jwks_url: "string.url?",
-    issuer: "string.url?",
-  }).optional(),
+  jwt: proxyJwtConfig.partial().optional(),
   allowed_ips: type("string[]").optional(),
   logout_url: "string.url?",
 });

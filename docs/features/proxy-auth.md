@@ -36,7 +36,7 @@ are treated as separate accounts even if they represent the same person.
    identity headers (and optionally a signed JWT) to the request.
 2. Headplane reads the configured headers. If a JWT is present, it validates the signature before
    trusting the claims.
-3. The subject value is normalized to `proxy:{preset}:{raw_value}` to keep it separate from OIDC
+3. The subject value is normalized to `proxy:custom:{raw_value}` to keep it separate from OIDC
    subjects in the database.
 4. Headplane looks up or creates a user record for that subject, then creates a session cookie.
 5. On subsequent requests, the existing session is reused as long as the proxy still forwards the
@@ -44,30 +44,20 @@ are treated as separate accounts even if they represent the same person.
 
 ## Configuration
 
-Add a `proxy` section to your Headplane config file:
+Add a `proxy` section to your Headplane config file. You configure the identity headers and
+(optionally) JWT validation directly:
 
 ```yaml
 proxy:
   # Set to false to define the proxy section without activating it.
   # enabled: true
 
-  # Use a preset for a known provider. This sets the correct headers and JWT
-  # validation automatically. One of:
-  #   authelia, authentik, oauth2-proxy, alb, cloudflare-access, gcp-iap
-  preset: "authentik"
+  # Which HTTP headers carry the user's identity.
+  headers:
+    subject: "Remote-User" # Required. Stable unique identifier for the user.
+    email: "Remote-Email" # Optional.
+    name: "Remote-Name" # Optional.
 
-  # Required for oauth2-proxy: the OIDC issuer URL used to discover the JWKS endpoint.
-  # issuer: "https://your-idp.example.com"
-
-  # Required for alb: the AWS region where your load balancer is deployed.
-  # region: "us-east-1"
-
-  # Required for cloudflare-access: your Cloudflare team name (the subdomain of
-  # cloudflareaccess.com used for your organization).
-  # team: "your-team"
-
-  # Required for gcp-iap: the IAP audience string for your backend service.
-  # audience: "/projects/123456/apps/my-app"
 
   # Restrict which source IPs are allowed to forward proxy headers. Accepts
   # individual IPs or CIDR ranges. If omitted, any IP can forward headers.
@@ -81,54 +71,32 @@ proxy:
   # logout_url: "https://auth.example.com/logout"
 ```
 
-### Manual Header and JWT Override
+### JWT Validation
 
-If you're not using a preset, or need to override what a preset provides, you can configure headers
-and JWT validation manually:
+When your provider sends a signed JWT, add a `jwt` block with the header name and key source.
+Validated JWT claims take priority over the plain identity headers.
 
 ```yaml
 proxy:
-  # Override which headers carry the user's identity.
   headers:
-    subject: "X-My-User-Id" # Required. The stable unique identifier for the user.
-    email: "X-My-User-Email" # Optional.
-    name: "X-My-User-Name" # Optional.
-
-  # Override JWT validation settings.
+    subject: "X-authentik-uid"
+    email: "X-authentik-email"
   jwt:
-    header: "X-My-Auth-Token"
-    jwks_url: "https://auth.example.com/.well-known/jwks.json"
-    issuer: "https://auth.example.com" # Optional. Validated against the JWT iss claim.
+    header: "X-authentik-jwt"
+    key_source:
+      kind: "dynamic_header"
+      meta_header: "X-authentik-meta-jwks"
 ```
 
-You can combine a preset with manual overrides. The manual values take precedence.
+Supported `key_source` kinds:
 
-## Presets
-
-Each preset configures the correct headers and JWT validation for a specific provider out of the box.
-
-| Preset              | JWT Header                 | Identity Headers                                                  | Extra Config |
-| ------------------- | -------------------------- | ----------------------------------------------------------------- | ------------ |
-| `authelia`          | None (header trust only)   | `Remote-User`, `Remote-Email`, `Remote-Name`                      | None         |
-| `authentik`         | `X-authentik-jwt`          | `X-authentik-uid`, `X-authentik-email`, `X-authentik-name`        | None         |
-| `oauth2-proxy`      | `Authorization: Bearer`    | `X-Forwarded-Email`, `X-Forwarded-Preferred-Username`             | `issuer`     |
-| `alb`               | `x-amzn-oidc-data`         | `x-amzn-oidc-identity`                                            | `region`     |
-| `cloudflare-access` | `cf-access-jwt-assertion`  | `Cf-Access-Authenticated-User-Email`                              | `team`       |
-| `gcp-iap`           | `x-goog-iap-jwt-assertion` | `X-Goog-Authenticated-User-Id`, `X-Goog-Authenticated-User-Email` | `audience`   |
-
-## JWT Validation
-
-When a preset includes a JWT header, Headplane validates the JWT signature before trusting any
-identity claims. The validated claims take priority over the plain identity headers.
-
-Each provider uses a different key source:
-
-- **Authentik**: fetches the JWKS URL from the `X-authentik-meta-jwks` header on each request.
-- **oauth2-proxy**: discovers the JWKS endpoint from the OIDC discovery document at `issuer`.
-- **ALB**: fetches per-key PEM certificates from the AWS public key endpoint for the configured `region`.
-- **Cloudflare Access**: fetches JWKS from `https://{team}.cloudflareaccess.com/cdn-cgi/access/certs`.
-- **GCP IAP**: fetches JWKS from Google's IAP public key endpoint.
-- **Authelia**: no JWT validation. Headplane trusts the headers directly.
+| Kind             | Description                                        | Extra Fields      |
+| ---------------- | -------------------------------------------------- | ----------------- |
+| `jwks_url`       | Fetch keys from a static JWKS endpoint             | `url`             |
+| `oidc_discovery` | Discover JWKS from the issuer's `.well-known` URL  | (uses `issuer`)   |
+| `aws_alb_pem`    | Fetch per-kid PEM from the AWS public key endpoint | (uses `region`)   |
+| `google_iap`     | Fetch from Google's IAP public key endpoint        | (uses `audience`) |
+| `dynamic_header` | Read the JWKS URL from a request header at runtime | `meta_header`     |
 
 JWKS responses are cached in memory for the lifetime of the process. ALB PEM keys are cached per
 key ID.
@@ -205,9 +173,8 @@ proxy:
 
 - **No group-to-role mapping**: Proxy auth does not read group claims from JWTs or headers. Role
   assignment is manual through the Users page.
-- **Changing the subject header**: If you change `headers.subject` (or switch presets), existing
-  users will not be matched. Their old records remain in the database but they'll get new accounts
-  on next login.
+- **Changing the subject header**: If you change `headers.subject`, existing users will not be
+  matched. Their old records remain in the database but they'll get new accounts on next login.
 - **Same person via OIDC and proxy**: If the same person authenticates through both OIDC and proxy
   auth, they get two separate user records. There's no automatic merging.
 
@@ -221,13 +188,19 @@ Generic forwarding headers like `X-Forwarded-User` never trigger this warning.
 
 ## Provider Guides
 
+Each provider needs different headers and JWT settings. Copy the relevant YAML block below into
+your Headplane config.
+
 ### Authelia
 
 Authelia forwards identity via plain headers. No JWT is involved.
 
 ```yaml
 proxy:
-  preset: "authelia"
+  headers:
+    subject: "Remote-User"
+    email: "Remote-Email"
+    name: "Remote-Name"
   allowed_ips:
     - "172.16.0.0/12" # Your Authelia container's network
 ```
@@ -242,7 +215,15 @@ the JWKS URL from the `X-authentik-meta-jwks` header that Authentik also forward
 
 ```yaml
 proxy:
-  preset: "authentik"
+  headers:
+    subject: "X-authentik-uid"
+    email: "X-authentik-email"
+    name: "X-authentik-name"
+  jwt:
+    header: "X-authentik-jwt"
+    key_source:
+      kind: "dynamic_header"
+      meta_header: "X-authentik-meta-jwks"
 ```
 
 No extra config is needed. The JWKS URL is discovered per-request from the meta header.
@@ -254,8 +235,15 @@ header. Headplane validates it using OIDC discovery.
 
 ```yaml
 proxy:
-  preset: "oauth2-proxy"
   issuer: "https://your-idp.example.com"
+  headers:
+    subject: "X-Forwarded-Email"
+    email: "X-Forwarded-Email"
+    name: "X-Forwarded-Preferred-Username"
+  jwt:
+    header: "Authorization" # Bearer token
+    key_source:
+      kind: "oidc_discovery"
 ```
 
 The `issuer` must match the OIDC issuer you configured in oauth2-proxy.
@@ -267,19 +255,32 @@ key endpoint using the `kid` from the JWT header.
 
 ```yaml
 proxy:
-  preset: "alb"
   region: "us-east-1"
+  headers:
+    subject: "x-amzn-oidc-identity"
+    email: "x-amzn-oidc-identity"
+  jwt:
+    header: "x-amzn-oidc-data"
+    key_source:
+      kind: "aws_alb_pem"
 ```
 
 ### Cloudflare Access
 
-Cloudflare Access signs a JWT and forwards it in `cf-access-jwt-assertion`. Headplane validates it
+Cloudflare Access signs a JWT and forwards it in `Cf-Access-Jwt-Assertion`. Headplane validates it
 against your team's JWKS endpoint.
 
 ```yaml
 proxy:
-  preset: "cloudflare-access"
-  team: "your-team"
+  team: "your-team-name"
+  headers:
+    subject: "Cf-Access-Authenticated-User-Email"
+    email: "Cf-Access-Authenticated-User-Email"
+  jwt:
+    header: "Cf-Access-Jwt-Assertion"
+    key_source:
+      kind: "jwks_url"
+      url: "https://your-team-name.cloudflareaccess.com/cdn-cgi/access/certs"
 ```
 
 The `team` value is the subdomain of `cloudflareaccess.com` for your organization (e.g. if your
@@ -287,13 +288,19 @@ Access URL is `your-team.cloudflareaccess.com`, use `your-team`).
 
 ### GCP IAP
 
-GCP IAP signs a JWT and forwards it in `x-goog-iap-jwt-assertion`. Headplane validates it against
+GCP IAP signs a JWT and forwards it in `X-Goog-Iap-Jwt-Assertion`. Headplane validates it against
 Google's IAP public keys and checks the `aud` claim against your configured audience.
 
 ```yaml
 proxy:
-  preset: "gcp-iap"
-  audience: "/projects/123456789/apps/my-app"
+  audience: "/projects/PROJECT_NUMBER/global/backendServices/SERVICE_ID"
+  headers:
+    subject: "X-Goog-Authenticated-User-Id"
+    email: "X-Goog-Authenticated-User-Email"
+  jwt:
+    header: "X-Goog-Iap-Jwt-Assertion"
+    key_source:
+      kind: "google_iap"
 ```
 
 The audience string is the IAP resource name for your backend service. Find it in the Google Cloud
