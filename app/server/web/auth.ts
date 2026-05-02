@@ -6,9 +6,24 @@ import { createCookie } from "react-router";
 import { ulid } from "ulidx";
 
 import type { Machine } from "~/types";
+import log from "~/utils/log";
 
 import { type HeadplaneUser, authSessions, users } from "../db/schema";
+import type { ProxyService } from "../proxy/service";
+import { AUTH_SPECIFIC_PROXY_HEADERS } from "../proxy/types";
 import { Capabilities, type Role, Roles, capsForRole } from "./roles";
+
+export type PrincipalUser = {
+  id: string;
+  subject: string;
+  role: Role;
+  headscaleUserId: string | undefined;
+};
+
+type PrincipalProfile = {
+  name: string;
+  email?: string;
+};
 
 export type Principal =
   | {
@@ -21,32 +36,14 @@ export type Principal =
       kind: "oidc";
       sessionId: string;
       idToken?: string;
-      user: {
-        id: string;
-        subject: string;
-        role: Role;
-        headscaleUserId: string | undefined;
-      };
-      profile: {
-        name: string;
-        email?: string;
-        username?: string;
-        picture?: string;
-      };
+      user: PrincipalUser;
+      profile: PrincipalProfile & { username?: string; picture?: string };
     }
   | {
       kind: "proxy";
       sessionId: string;
-      user: {
-        id: string;
-        subject: string;
-        role: Role;
-        headscaleUserId: string | undefined;
-      };
-      profile: {
-        name: string;
-        email?: string;
-      };
+      user: PrincipalUser;
+      profile: PrincipalProfile;
     };
 
 interface CookiePayload {
@@ -63,6 +60,7 @@ export interface AuthServiceOptions {
   secret: string;
   headscaleApiKey?: string;
   db: NodeSQLiteDatabase;
+  proxyService?: ProxyService;
   cookie: {
     name: string;
     secure: boolean;
@@ -106,10 +104,15 @@ export interface AuthService {
   pruneExpiredSessions(): Promise<void>;
   start(): void;
   stop(): void;
+  setProxyService(service: ProxyService): void;
+  getProxyCookie(request: Request): string | null;
 }
 
 export function createAuthService(opts: AuthServiceOptions): AuthService {
   const requestCache = new WeakMap<Request, Promise<Principal>>();
+  const proxyCookieCache = new WeakMap<Request, string>();
+  const warnedProxyHeaders = new Set<string>();
+  let proxyService: ProxyService | undefined = opts.proxyService;
   let pruneTimer: ReturnType<typeof setInterval> | undefined;
 
   async function encodeCookie(payload: CookiePayload, maxAge: number): Promise<string> {
@@ -160,7 +163,7 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
     return createHash("sha256").update(key).digest("hex");
   }
 
-  async function resolve(request: Request): Promise<Principal> {
+  async function resolveFromCookie(request: Request): Promise<Principal> {
     const payload = await decodeCookie(request);
 
     const [session] = await opts.db
@@ -251,6 +254,51 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
         picture: user.picture ?? undefined,
       },
     };
+  }
+
+  async function resolve(request: Request): Promise<Principal> {
+    if (proxyService) {
+      let existingPrincipal: Principal | undefined;
+      try {
+        existingPrincipal = await resolveFromCookie(request);
+        if (existingPrincipal.kind === "proxy") {
+          return existingPrincipal;
+        }
+      } catch (error) {
+        // Expected: missing/expired/invalid cookies. Anything else (DB crash etc) should propagate.
+        if (error instanceof Error && /session|cookie|signature/i.test(error.message)) {
+          // Normal auth flow — no valid cookie, try proxy auth
+        } else {
+          throw error;
+        }
+      }
+
+      const result = await proxyService.authenticate(request);
+      if (result) {
+        if (existingPrincipal) {
+          await opts.db
+            .delete(authSessions)
+            .where(eq(authSessions.id, existingPrincipal.sessionId));
+        }
+        proxyCookieCache.set(request, result.cookie);
+        return result.principal;
+      }
+
+      if (existingPrincipal) {
+        return existingPrincipal;
+      }
+
+      throw new Error("No valid session or proxy identity found");
+    }
+
+    for (const header of AUTH_SPECIFIC_PROXY_HEADERS) {
+      if (request.headers.has(header) && !warnedProxyHeaders.has(header)) {
+        warnedProxyHeaders.add(header);
+        log.warn("auth", `Proxy header "${header}" detected but proxy auth is not configured`);
+      }
+    }
+
+    return resolveFromCookie(request);
   }
 
   function require(request: Request): Promise<Principal> {
@@ -569,6 +617,16 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
     }
   }
 
+  // Proxy service depends on auth, but auth is created first. This setter
+  // resolves the circular dependency after both are initialized.
+  function setProxyService(service: ProxyService): void {
+    proxyService = service;
+  }
+
+  function getProxyCookie(request: Request): string | null {
+    return proxyCookieCache.get(request) ?? null;
+  }
+
   return {
     require: require,
     can,
@@ -591,5 +649,7 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
     pruneExpiredSessions,
     start,
     stop,
+    setProxyService,
+    getProxyCookie,
   };
 }

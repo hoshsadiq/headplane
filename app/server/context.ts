@@ -10,6 +10,10 @@ import { loadHeadscaleConfig } from "./headscale/config-loader";
 import { createLiveStore, nodesResource, usersResource } from "./headscale/live-store";
 import { createAgentManager } from "./hp-agent";
 import { createOidcService } from "./oidc/provider";
+import { createIdentityResolver, type ProxyPresetConfig } from "./proxy/identity";
+import { createJwtValidator } from "./proxy/jwt";
+import { PRESETS } from "./proxy/presets";
+import { createProxyService } from "./proxy/service";
 import { createAuthService } from "./web/auth";
 
 export type AppContext = Awaited<ReturnType<typeof createAppContext>>;
@@ -94,6 +98,19 @@ export async function createAppContext(config: HeadplaneConfig) {
       );
     }
 
+    const presetKey = config.proxy.preset;
+    const preset = presetKey ? PRESETS[presetKey] : undefined;
+
+    if (preset || config.proxy.headers?.subject) {
+      const presetConfig: ProxyPresetConfig = preset
+        ? { key: presetKey!, headers: preset.headers }
+        : { key: "custom", headers: config.proxy.headers! };
+
+      const jwtValidator = preset?.jwt ? createJwtValidator(preset, config.proxy) : undefined;
+      const identityResolver = createIdentityResolver(presetConfig, config.proxy, jwtValidator);
+      const proxyServ = createProxyService(auth, identityResolver, config.proxy);
+      auth.setProxyService(proxyServ);
+    }
   }
 
   return {
